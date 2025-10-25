@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Mini Minecraf</title>
+<style>
+html,body{margin:0;padding:0;overflow:hidden;height:100%;background:#87CEEB;}
+canvas{display:block;}
+#ui{
+  position:fixed;bottom:10px;left:50%;transform:translateX(-50%);
+  width:400px;text-align:center;font-family:sans-serif;color:white;user-select:none;
+}
+.bar{height:10px;background:#333;border:1px solid #999;margin:3px 0;}
+#healthInner{height:100%;background:#f44;width:100%;}
+#hungerInner{height:100%;background:#fc4;width:100%;}
+#xpInner{height:100%;background:#4f4;width:30%;}
+#hotbar{display:flex;justify-content:center;margin-top:8px;}
+.slot{width:40px;height:40px;border:2px solid #999;margin:0 2px;background:rgba(255,255,255,0.1);}
+.slot.active{border-color:#fff;}
+</style>
+</head>
+<body>
+<div id="ui">
+  <div class="bar"><div id="healthInner"></div></div>
+  <div class="bar"><div id="hungerInner"></div></div>
+  <div class="bar"><div id="xpInner"></div></div>
+  <div id="hotbar">
+    <div class="slot active"></div>
+    <div class="slot"></div>
+    <div class="slot"></div>
+    <div class="slot"></div>
+    <div class="slot"></div>
+  </div>
+</div>
+
+<!-- 1️⃣ Load Three.js -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.min.js"></script>
+
+<!-- 2️⃣ Load PointerLockControls -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.164.0/examples/js/controls/PointerLockControls.js"></script>
+
+<!-- 3️⃣ Main Game Code -->
+<script>
+// === BASIC SETUP ===
+let scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x87CEEB,50,300);
+let camera = new THREE.PerspectiveCamera(75,window.innerWidth/window.innerHeight,0.1,1000);
+let renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(window.innerWidth,window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// === LIGHTS ===
+scene.add(new THREE.AmbientLight(0xffffff,0.6));
+let sun = new THREE.DirectionalLight(0xffffff,0.6);
+sun.position.set(50,100,30);
+scene.add(sun);
+
+// === AI-STYLED TEXTURES ===
+function makeTexture(c1,c2){
+  let canvas=document.createElement('canvas');canvas.width=canvas.height=32;
+  let ctx=canvas.getContext('2d');
+  for(let y=0;y<32;y++){
+    for(let x=0;x<32;x++){
+      ctx.fillStyle=Math.random()>0.5?c1:c2;
+      ctx.fillRect(x,y,1,1);
+    }
+  }
+  let tex=new THREE.CanvasTexture(canvas);
+  tex.magFilter=THREE.NearestFilter;
+  tex.minFilter=THREE.NearestMipMapNearestFilter;
+  return tex;
+}
+const texGrass = makeTexture('#3aa23a','#2d8b2d');
+const texDirt  = makeTexture('#8b5a2b','#6b4220');
+const texStone = makeTexture('#888','#777');
+
+// === WORLD GENERATION ===
+const blockSize = 1;
+let world = new THREE.Group();
+for(let x=-16;x<16;x++){
+  for(let z=-16;z<16;z++){
+    let h = 2+Math.floor(Math.random()*2);
+    for(let y=0;y<h;y++){
+      let mat;
+      if(y===h-1) mat=new THREE.MeshLambertMaterial({map:texGrass});
+      else if(y>=h-3) mat=new THREE.MeshLambertMaterial({map:texDirt});
+      else mat=new THREE.MeshLambertMaterial({map:texStone});
+      let cube = new THREE.Mesh(new THREE.BoxGeometry(blockSize,blockSize,blockSize),mat);
+      cube.position.set(x*blockSize,y*blockSize,z*blockSize);
+      cube.userData.isBlock=true;
+      world.add(cube);
+    }
+  }
+}
+scene.add(world);
+
+// === PLAYER CONTROLS ===
+const controls = new THREE.PointerLockControls(camera, renderer.domElement);
+camera.position.y = 5;
+scene.add(controls.getObject());
+
+let velocity = new THREE.Vector3();
+let direction = new THREE.Vector3();
+let moveForward=false, moveBackward=false, moveLeft=false, moveRight=false, canJump=false;
+
+document.addEventListener('click',()=>controls.lock());
+
+document.addEventListener('keydown', e=>{
+  switch(e.code){
+    case 'KeyW': case 'ArrowUp': moveForward=true; break;
+    case 'KeyA': case 'ArrowLeft': moveLeft=true; break;
+    case 'KeyS': case 'ArrowDown': moveBackward=true; break;
+    case 'KeyD': case 'ArrowRight': moveRight=true; break;
+    case 'Space': if(canJump){velocity.y+=5; canJump=false;} break;
+  }
+});
+document.addEventListener('keyup', e=>{
+  switch(e.code){
+    case 'KeyW': case 'ArrowUp': moveForward=false; break;
+    case 'KeyA': case 'ArrowLeft': moveLeft=false; break;
+    case 'KeyS': case 'ArrowDown': moveBackward=false; break;
+    case 'KeyD': case 'ArrowRight': moveRight=false; break;
+  }
+});
+
+// === BLOCK INTERACTION ===
+const raycaster = new THREE.Raycaster();
+function interact(remove){
+  raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
+  let intersects = raycaster.intersectObjects(world.children);
+  if(intersects.length>0){
+    let hit = intersects[0];
+    let obj = hit.object;
+    if(remove){
+      world.remove(obj);
+    } else {
+      let n = hit.face.normal.clone().multiplyScalar(blockSize);
+      let newPos = obj.position.clone().add(n);
+      let cube = new THREE.Mesh(new THREE.BoxGeometry(blockSize,blockSize,blockSize),
+                                new THREE.MeshLambertMaterial({map:texGrass}));
+      cube.position.copy(newPos);
+      cube.userData.isBlock=true;
+      world.add(cube);
+    }
+  }
+}
+document.addEventListener('mousedown', e=>{
+  if(!controls.isLocked) return;
+  if(e.button===0) interact(true);
+  if(e.button===2) interact(false);
+});
+document.addEventListener('contextmenu', e=>e.preventDefault());
+
+// === RESIZE ===
+window.addEventListener('resize', ()=>{
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// === GAME LOOP ===
+const clock = new THREE.Clock();
+function animate(){
+  requestAnimationFrame(animate);
+  let delta = clock.getDelta();
+  
+  velocity.x -= velocity.x*10.0*delta;
+  velocity.z -= velocity.z*10.0*delta;
+  velocity.y -= 9.8*5.0*delta;
+  
+  direction.z = Number(moveForward)-Number(moveBackward);
+  direction.x = Number(moveRight)-Number(moveLeft);
+  direction.normalize();
+  
+  if(moveForward||moveBackward) velocity.z -= direction.z*50.0*delta;
+  if(moveLeft||moveRight) velocity.x -= direction.x*50.0*delta;
+  
+  controls.moveRight(-velocity.x*delta);
+  controls.moveForward(-velocity.z*delta);
+  
+  controls.getObject().position.y += velocity.y*delta;
+  if(controls.getObject().position.y<3){
+    velocity.y=0;
+    controls.getObject().position.y=3;
+    canJump=true;
+  }
+  
+  renderer.render(scene,camera);
+}
+animate();
+
+// === UI UPDATE ===
+let health=100, hunger=100, xp=30;
+setInterval(()=>{
+  health=Math.max(0,health-0.05);
+  hunger=Math.max(0,hunger-0.02);
+  xp=(xp+0.05)%100;
+  document.getElementById('healthInner').style.width=health+'%';
+  document.getElementById('hungerInner').style.width=hunger+'%';
+  document.getElementById('xpInner').style.width=xp+'%';
+},100);
+</script>
+</body>
+</html>
